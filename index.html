@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>TracerCam</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111111;
+      --border: #2a2a2a;
+      --accent: #e8ff47;
+      --accent2: #ff6b35;
+      --text: #f0f0f0;
+      --muted: #666;
+      --panel-h: 160px;
+    }
+
+    html, body {
+      height: 100%;
+      width: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      font-family: 'DM Mono', monospace;
+      color: var(--text);
+    }
+
+    /* ── SPLASH SCREEN ── */
+    #splash {
+      position: fixed; inset: 0; z-index: 999;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px;
+      transition: opacity 0.6s ease, visibility 0.6s ease;
+    }
+    #splash.hidden { opacity: 0; visibility: hidden; }
+
+    .splash-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(64px, 20vw, 120px);
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      line-height: 1;
+    }
+    .splash-sub {
+      font-size: 11px;
+      letter-spacing: 0.25em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .splash-loader {
+      margin-top: 32px;
+      width: 48px; height: 2px;
+      background: var(--border);
+      position: relative; overflow: hidden;
+    }
+    .splash-loader::after {
+      content: '';
+      position: absolute; top: 0; left: -100%;
+      width: 100%; height: 100%;
+      background: var(--accent);
+      animation: load 1.2s ease forwards;
+    }
+    @keyframes load { to { left: 100%; } }
+
+    /* ── MAIN APP ── */
+    #app {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+    }
+
+    /* ── VIEWPORT (camera + overlay) ── */
+    #viewport {
+      position: relative;
+      flex: 1;
+      overflow: hidden;
+      background: #000;
+    }
+
+    #camera {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    #overlay-img {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+      opacity: 0.5;
+      display: none;
+      transform-origin: center center;
+      /* transform variables */
+      --tx: 0px; --ty: 0px; --scale: 1; --rot: 0deg;
+      transform: translate(var(--tx), var(--ty)) scale(var(--scale)) rotate(var(--rot));
+    }
+
+    /* crosshair guide */
+    #crosshair {
+      position: absolute; inset: 0;
+      pointer-events: none;
+      opacity: 0.18;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: var(--accent);
+    }
+    #crosshair::before {
+      left: 50%; top: 0; bottom: 0;
+      width: 1px; transform: translateX(-50%);
+    }
+    #crosshair::after {
+      top: 50%; left: 0; right: 0;
+      height: 1px; transform: translateY(-50%);
+    }
+
+    /* corner brackets */
+    .corner {
+      position: absolute;
+      width: 24px; height: 24px;
+      pointer-events: none;
+      opacity: 0.4;
+    }
+    .corner svg { width: 100%; height: 100%; }
+    .corner.tl { top: 16px; left: 16px; }
+    .corner.tr { top: 16px; right: 16px; transform: scaleX(-1); }
+    .corner.bl { bottom: 16px; left: 16px; transform: scaleY(-1); }
+    .corner.br { bottom: 16px; right: 16px; transform: scale(-1,-1); }
+
+    /* NO-CAM placeholder */
+    #no-cam {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px;
+      background: #050505;
+    }
+    #no-cam .icon-cam {
+      width: 56px; height: 56px; opacity: 0.3;
+    }
+    #no-cam p {
+      font-size: 11px; color: var(--muted);
+      letter-spacing: 0.15em; text-align: center;
+      max-width: 220px; line-height: 1.8;
+    }
+
+    /* ── PANEL ── */
+    #panel {
+      height: var(--panel-h);
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      padding: 12px 16px 16px;
+      gap: 10px;
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    /* top row: buttons */
+    .panel-row {
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    .btn {
+      display: flex; align-items: center; justify-content: center;
+      gap: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      padding: 8px 14px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      -webkit-tap-highlight-color: transparent;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .btn:active { transform: scale(0.96); }
+    .btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+    .btn-accent {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .btn-accent:active, .btn-accent.active {
+      background: var(--accent);
+      color: #000;
+    }
+    .btn-warn {
+      border-color: var(--accent2);
+      color: var(--accent2);
+    }
+    .btn-warn:active { background: var(--accent2); color: #fff; }
+
+    /* camera toggle */
+    #btn-cam { flex: 1; }
+    #btn-cam.on { border-color: var(--accent); color: #000; background: var(--accent); }
+
+    /* image load */
+    #btn-load { flex: 1; }
+
+    /* clear */
+    #btn-clear { padding: 8px 10px; }
+
+    /* flip camera */
+    #btn-flip { padding: 8px 10px; }
+
+    /* ── SLIDER SECTION ── */
+    .slider-block {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .slider-label {
+      font-size: 9px; letter-spacing: 0.18em;
+      color: var(--muted); text-transform: uppercase;
+      min-width: 80px;
+    }
+    .slider-value {
+      font-size: 11px; letter-spacing: 0.1em;
+      color: var(--accent); min-width: 34px;
+      text-align: right;
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      flex: 1;
+      height: 2px;
+      background: var(--border);
+      outline: none;
+      cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      border: 2px solid var(--bg);
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+    input[type=range]::-moz-range-thumb {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      border: 2px solid var(--bg);
+    }
+
+    /* ── TRANSFORM CONTROLS ── */
+    #transform-row {
+      display: none;
+      align-items: center; gap: 8px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    #transform-row::-webkit-scrollbar { display: none; }
+    #transform-row.visible { display: flex; }
+
+    .mini-btn {
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      padding: 6px 10px;
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.1em;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .mini-btn:active { background: var(--border); color: var(--text); }
+    .mini-btn svg { width: 12px; height: 12px; }
+
+    /* ── STATUS BAR ── */
+    #status {
+      position: absolute;
+      top: 16px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      padding: 4px 14px;
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      color: var(--muted);
+      text-transform: uppercase;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    #status.show { opacity: 1; }
+
+    /* ── HIDDEN INPUT ── */
+    #file-input { display: none; }
+
+    /* ── DRAG INSTRUCTION ── */
+    #drag-hint {
+      position: absolute;
+      bottom: calc(var(--panel-h) + 12px);
+      left: 50%; transform: translateX(-50%);
+      font-size: 9px; letter-spacing: 0.18em;
+      color: rgba(255,255,255,0.35);
+      text-transform: uppercase;
+      pointer-events: none;
+      transition: opacity 0.4s;
+      white-space: nowrap;
+    }
+    #drag-hint.hidden { opacity: 0; }
+
+    /* ── INVERT TOGGLE ── */
+    #overlay-img.inverted { filter: invert(1); }
+
+    /* ── TORCH indicator ── */
+    .torch-on { color: #ffdd44 !important; border-color: #ffdd44 !important; }
+  </style>
+</head>
+<body>
+
+<!-- SPLASH -->
+<div id="splash">
+  <div class="splash-title">TRACER</div>
+  <div class="splash-sub">Camera Overlay Tool &mdash; v1.0</div>
+  <div class="splash-loader"></div>
+</div>
+
+<!-- APP -->
+<div id="app">
+
+  <!-- VIEWPORT -->
+  <div id="viewport">
+    <div id="no-cam">
+      <svg class="icon-cam" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg>
+      <p>Presiona CAMARA para activar la camara trasera</p>
+    </div>
+
+    <video id="camera" autoplay muted playsinline></video>
+    <img id="overlay-img" alt="overlay" draggable="false" />
+    <div id="crosshair"></div>
+
+    <!-- corner brackets -->
+    <div class="corner tl">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#e8ff47" stroke-width="2">
+        <path d="M2 12 L2 2 L12 2"/>
+      </svg>
+    </div>
+    <div class="corner tr">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#e8ff47" stroke-width="2">
+        <path d="M2 12 L2 2 L12 2"/>
+      </svg>
+    </div>
+    <div class="corner bl">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#e8ff47" stroke-width="2">
+        <path d="M2 12 L2 2 L12 2"/>
+      </svg>
+    </div>
+    <div class="corner br">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#e8ff47" stroke-width="2">
+        <path d="M2 12 L2 2 L12 2"/>
+      </svg>
+    </div>
+
+    <div id="status">Listo</div>
+    <div id="drag-hint" class="hidden">Arrastra la imagen para posicionarla</div>
+  </div>
+
+  <!-- PANEL -->
+  <div id="panel">
+    <!-- Row 1: Main controls -->
+    <div class="panel-row">
+      <button class="btn btn-accent" id="btn-cam" onclick="toggleCamera()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        Camara
+      </button>
+
+      <button class="btn" id="btn-load" onclick="document.getElementById('file-input').click()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+        Cargar Imagen
+      </button>
+
+      <button class="btn" id="btn-flip" onclick="flipCamera()" title="Voltear camara">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <polyline points="1 4 1 10 7 10"/>
+          <path d="M3.51 15a9 9 0 1 0 .49-4.28"/>
+        </svg>
+      </button>
+
+      <button class="btn btn-warn" id="btn-clear" onclick="clearImage()" title="Limpiar imagen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6l-1 14H6L5 6"/>
+          <path d="M10 11v6M14 11v6"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Row 2: Opacity slider -->
+    <div class="slider-block">
+      <span class="slider-label">Opacidad</span>
+      <input type="range" id="opacity-slider" min="0" max="100" value="50"
+             oninput="updateOpacity(this.value)" />
+      <span class="slider-value" id="opacity-val">50%</span>
+    </div>
+
+    <!-- Row 3: Scale slider -->
+    <div class="slider-block">
+      <span class="slider-label">Escala</span>
+      <input type="range" id="scale-slider" min="20" max="300" value="100"
+             oninput="updateScale(this.value)" />
+      <span class="slider-value" id="scale-val">100%</span>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden file input (accepts images and camera) -->
+<input type="file" id="file-input" accept="image/*" onchange="loadImage(event)" />
+
+<script>
+  // ── STATE ──
+  let stream = null;
+  let facingMode = 'environment';
+  let overlayLoaded = false;
+
+  // Transform state
+  let tx = 0, ty = 0, scale = 1, rot = 0;
+
+  // Touch/drag state
+  let isDragging = false;
+  let lastTouch = null;
+  let pinchStart = null;
+
+  const video = document.getElementById('camera');
+  const overlay = document.getElementById('overlay-img');
+  const viewport = document.getElementById('viewport');
+  const status = document.getElementById('status');
+  const dragHint = document.getElementById('drag-hint');
+
+  // ── SPLASH ──
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      document.getElementById('splash').classList.add('hidden');
+    }, 1600);
+  });
+
+  // ── SHOW STATUS ──
+  let statusTimer;
+  function showStatus(msg) {
+    status.textContent = msg;
+    status.classList.add('show');
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => status.classList.remove('show'), 2000);
+  }
+
+  // ── CAMERA ──
+  async function toggleCamera() {
+    const btn = document.getElementById('btn-cam');
+    if (stream) {
+      stopCamera();
+      btn.classList.remove('on');
+      btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg> Camara`;
+      showStatus('Camara apagada');
+    } else {
+      await startCamera();
+      btn.classList.add('on');
+      btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+        <circle cx="12" cy="13" r="4"/>
+      </svg> Apagar`;
+      showStatus('Camara activa');
+    }
+  }
+
+  async function startCamera() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: facingMode,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
+        audio: false
+      });
+      video.srcObject = stream;
+      video.style.display = 'block';
+      document.getElementById('no-cam').style.display = 'none';
+    } catch(e) {
+      showStatus('Error: permiso de camara denegado');
+      console.error(e);
+    }
+  }
+
+  function stopCamera() {
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+      video.srcObject = null;
+      video.style.display = 'none';
+      document.getElementById('no-cam').style.display = 'flex';
+    }
+  }
+
+  async function flipCamera() {
+    facingMode = facingMode === 'environment' ? 'user' : 'environment';
+    if (stream) {
+      stopCamera();
+      await startCamera();
+      document.getElementById('btn-cam').classList.add('on');
+      showStatus(facingMode === 'user' ? 'Camara frontal' : 'Camara trasera');
+    } else {
+      showStatus(facingMode === 'user' ? 'Frontal (siguiente apertura)' : 'Trasera (siguiente apertura)');
+    }
+  }
+
+  // ── LOAD IMAGE ──
+  function loadImage(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      overlay.src = ev.target.result;
+      overlay.style.display = 'block';
+      overlayLoaded = true;
+      resetTransform();
+      dragHint.classList.remove('hidden');
+      setTimeout(() => dragHint.classList.add('hidden'), 3000);
+      showStatus('Imagen cargada');
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }
+
+  function clearImage() {
+    overlay.src = '';
+    overlay.style.display = 'none';
+    overlayLoaded = false;
+    dragHint.classList.add('hidden');
+    showStatus('Imagen eliminada');
+  }
+
+  // ── OPACITY ──
+  function updateOpacity(val) {
+    overlay.style.opacity = val / 100;
+    document.getElementById('opacity-val').textContent = val + '%';
+  }
+
+  // ── SCALE ──
+  function updateScale(val) {
+    scale = val / 100;
+    document.getElementById('scale-val').textContent = val + '%';
+    applyTransform();
+  }
+
+  // ── TRANSFORM ──
+  function applyTransform() {
+    overlay.style.setProperty('--tx', tx + 'px');
+    overlay.style.setProperty('--ty', ty + 'px');
+    overlay.style.setProperty('--scale', scale);
+    overlay.style.setProperty('--rot', rot + 'deg');
+  }
+
+  function resetTransform() {
+    tx = 0; ty = 0; scale = 1; rot = 0;
+    document.getElementById('scale-slider').value = 100;
+    document.getElementById('scale-val').textContent = '100%';
+    applyTransform();
+  }
+
+  // ── TOUCH: Drag (single finger) ──
+  viewport.addEventListener('touchstart', (e) => {
+    if (!overlayLoaded) return;
+    if (e.touches.length === 1) {
+      isDragging = true;
+      lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    } else if (e.touches.length === 2) {
+      isDragging = false;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinchStart = { dist: Math.hypot(dx, dy), scale: scale };
+    }
+  }, { passive: true });
+
+  viewport.addEventListener('touchmove', (e) => {
+    if (!overlayLoaded) return;
+    if (e.touches.length === 1 && isDragging && lastTouch) {
+      const dx = e.touches[0].clientX - lastTouch.x;
+      const dy = e.touches[0].clientY - lastTouch.y;
+      tx += dx; ty += dy;
+      lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      applyTransform();
+    } else if (e.touches.length === 2 && pinchStart) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      scale = Math.min(5, Math.max(0.1, pinchStart.scale * (dist / pinchStart.dist)));
+      const pct = Math.round(scale * 100);
+      document.getElementById('scale-slider').value = Math.min(300, pct);
+      document.getElementById('scale-val').textContent = pct + '%';
+      applyTransform();
+    }
+  }, { passive: true });
+
+  viewport.addEventListener('touchend', () => {
+    isDragging = false;
+    lastTouch = null;
+    pinchStart = null;
+  });
+
+  // ── MOUSE drag (desktop) ──
+  let mouseDown = false, lastMouse = null;
+  viewport.addEventListener('mousedown', (e) => {
+    if (!overlayLoaded) return;
+    mouseDown = true;
+    lastMouse = { x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!mouseDown || !overlayLoaded || !lastMouse) return;
+    tx += e.clientX - lastMouse.x;
+    ty += e.clientY - lastMouse.y;
+    lastMouse = { x: e.clientX, y: e.clientY };
+    applyTransform();
+  });
+  window.addEventListener('mouseup', () => { mouseDown = false; lastMouse = null; });
+
+  // Mouse wheel scale
+  viewport.addEventListener('wheel', (e) => {
+    if (!overlayLoaded) return;
+    e.preventDefault();
+    scale = Math.min(5, Math.max(0.1, scale * (e.deltaY < 0 ? 1.05 : 0.95)));
+    const pct = Math.round(scale * 100);
+    document.getElementById('scale-slider').value = Math.min(300, pct);
+    document.getElementById('scale-val').textContent = pct + '%';
+    applyTransform();
+  }, { passive: false });
+
+  // Double-tap to reset
+  let lastTap = 0;
+  viewport.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTap < 350) {
+      resetTransform();
+      showStatus('Posicion reiniciada');
+    }
+    lastTap = now;
+  });
+
+  // Register service worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+</script>
+</body>
+</html>
